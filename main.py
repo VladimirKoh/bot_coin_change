@@ -6,7 +6,9 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from contextlib import suppress
 from aiogram.utils.exceptions import MessageNotModified
+import uuid
 from dotenv import load
+
 
 import os
 
@@ -22,12 +24,14 @@ dp = Dispatcher(bot=bot, storage=storage)
 
 
 NAME_BOT = 'DemonstrationWorkBot'
+ADMIN_CHAT = os.getenv('ADMIN_CHAT_ID')
 
 
 class StateUsersData(StatesGroup):
     Calculate_RUB_BTC = State()
     RewievState = State()
     BuyMONERO = State()
+
 
 class BuyMonero(StatesGroup):
     inputMonero = State()
@@ -36,18 +40,28 @@ class BuyMonero(StatesGroup):
     finalMonero = State()
 
 
-# MONERO
-# BITCOIN
-# USDT
+class BuyBTC(StatesGroup):
+    inputBTC = State()
+    inputChangePay = State()
+    inputBTCWallet = State()
+    finalBTC = State()
 
 
-# async def edit_text_message(message: types.Message, text: str, keyboard: types.ReplyKeyboardMarkup):
-#     with suppress(MessageNotModified):
-#         await message.edit_text(text, reply_markup=keyboard())
+class BuyUSDT(StatesGroup):
+    inputUSDT = State()
+    inputChangePay = State()
+    inputUSDTWallet = State()
+    finalUSDT = State()
 
 
-@dp.message_handler(commands=['start'])
-async def command_start_process(message: types.Message):
+async def edit_text_message(message: types.Message, text: str, keyboard):
+    with suppress(MessageNotModified):
+        await message.edit_text(text, reply_markup=keyboard)
+
+
+@dp.message_handler(commands=['start'], state='*')
+async def command_start_process(message: types.Message, state: FSMContext):
+    await state.finish()
     if message.text[7:]:
         # куда то записываем парнерские данные
         pass
@@ -168,10 +182,11 @@ async def command_buy_monero_process(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=BuyMonero.inputMonero)
 async def check_rub_monero(message: types.Message, state: FSMContext):
-    rub: float = message.text
+    monero: float = message.text
     # проверка на формат Х.ХХХХ
     # првоерка что в банке есть столько денег
-    print(rub)
+    print(monero)
+    await state.update_data(type_coin=MONERO, count=monero) # запись данных в data
     text = "Выберете способ оплаты"
     await message.answer(text, reply_markup=get_keyboard_change_pay())
     await BuyMonero.next()
@@ -180,7 +195,7 @@ async def check_rub_monero(message: types.Message, state: FSMContext):
 @dp.message_handler(state=BuyMonero.inputChangePay)
 async def check_rub_monero_change_pay(message: types.Message, state: FSMContext):
     change_pay = message.text
-    # записали в дату
+    await state.update_data(change_pay=change_pay) # запись данных в data
     text = "Введите адрес своего кошелька для получения"
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
     await BuyMonero.next()
@@ -189,36 +204,72 @@ async def check_rub_monero_change_pay(message: types.Message, state: FSMContext)
 @dp.message_handler(state=BuyMonero.inputMoneroWallet)
 async def check_rub_monero_wallet(message: types.Message, state: FSMContext):
     wallet: str = message.text
-    # проверка на формат кошелька
-    print(wallet)
-    count_rub = 1234 # считывает из даты
-    count_monero = 12
-    text = f"""<b>Ваша заявка действует 20 минут</b>
+    print(len(wallet))
+    if len(wallet) > 80 and wallet.startswith(('4', '8', 4, 8)):
+        await state.update_data(wallet=wallet) # запись данных в data
+        user_data = await state.get_data()
+        count_rub = 10000
+        number_card = user_data['change_pay'] # делаем запрос в базу данных и вытягиваем номер кошелька по ключу change_pay
+        text = f"""<b>Ваша заявка действует 20 минут</b>
 
 Вам необходимо сделать преевод
-на карту: <code>2202206191497150</code>
+на карту: <code>{number_card}</code>
 
 <i>Нажмите на номер карты, чтобы скопировать</i>
 
 На сумму: <code>{count_rub}</code>
-Вам зачислиться: {count_monero} MONERO
+Вам зачислиться: {user_data['count']} {user_data['type_coin']}
 
 Текст.
-    """
-    await message.answer(text, reply_markup=get_keyboard_buy_final())
-    await BuyMonero.next()
+        """
+        await message.answer(text, reply_markup=get_keyboard_buy_final())
+        await BuyMonero.next()
+    else:
+        await message.answer('Введите корректный адрес кошелька', reply_markup=get_keyboard_back_to_start())
 
 
 
 @dp.message_handler(Text(equals=BUY_FINAL), state=BuyMonero.finalMonero)
 async def check_rub_monero_wallet_final(message: types.Message, state: FSMContext):
     # отправляем в канал анкету для подтверждения
-    print('Отправил анкету на расмотрение')
+    
+    user_data = await state.get_data()
+
+    type_coint = user_data['type_coin']
+    count = user_data['count']
+    wallet = user_data['wallet']
+    change_pay = user_data['change_pay']
+
+    order = f"""Заявка от клиента
+Ему необходимо отправить {type_coint}
+В количестве {count}
+На кошелек: <code>{wallet}</code>
+
+Он прислал 10000 руб
+Спсоб оплаты {change_pay}
+    """
+    label = uuid.uuid4()
+    await bot.send_message(chat_id=ADMIN_CHAT, text=order, reply_markup=get_keyboard_channel_yes_no(label))
     text = "Ваша заявка на обмен принята\nОжидайте в течении 20 минут средства на вашем кошельке"
     await message.answer(text, reply_markup=get_keyboard_back_to_start_mind())
+    await state.finish()
 
 
 # КОНЕЦ РАЗДЕЛА
+
+@dp.callback_query_handler(Text(startswith='order_'))
+async def callback_order_check_or_cancel(callback: types.Message):
+    print(callback.data)
+    if str(callback.data).startswith('order_check_'):
+        order_id = callback.data.split('_')[-1]
+        # ставим статус заявки 1
+        print(order_id)
+        text = callback.message.text + '\n\n✅ ЗАЯВКА ОТРАБОТАНА'
+        await edit_text_message(callback.message, text, None)
+    else:
+        text = callback.message.text + '\n\n❌ ЗАЯВКА ОТМЕНЕНА'
+        await edit_text_message(callback.message, text, None)
+
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)

@@ -85,3 +85,11 @@ def get_keyboard_change_pay() -> ReplyKeyboardMarkup:
     kb.add(b1)
     kb.add(b2)
     return kb
+
+
+def get_keyboard_channel_yes_no(label):
+    ikb = InlineKeyboardMarkup(row_width=2)
+    ib1 = InlineKeyboardButton('✅ Отработана', callback_data=f'order_check_{label}')
+    ib2 = InlineKeyboardButton('❌ Отменить', callback_data=f'order_cancel_{label}')
+    ikb.add(ib1, ib2)
+    return ikb
